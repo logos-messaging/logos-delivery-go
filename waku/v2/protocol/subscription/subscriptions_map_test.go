@@ -217,3 +217,51 @@ func TestSubscriptionsNotify(t *testing.T) {
 	wg.Wait()
 	<-successChan
 }
+
+// TestSetClosingDoesNotHoldInnerLock verifies that SetClosing does not leave
+// the SubscriptionDetails RWMutex held when the Closing channel has no ready
+// receiver
+func TestSetClosingDoesNotHoldInnerLock(t *testing.T) {
+	fmap := NewSubscriptionMap(utils.Logger())
+	peerID := createPeerID(t)
+	sub := fmap.NewSubscription(peerID, protocol.ContentFilter{
+		PubsubTopic:   PUBSUB_TOPIC,
+		ContentTopics: protocol.NewContentTopicSet("ct1"),
+	})
+
+	// Intentionally do NOT spawn a receiver on sub.Closing — reproduces the
+	// scenario where the api/filter multiplex goroutine or its downstream
+	// apiSub.closing consumer is stalled (needing outer mapRef.Lock that
+	// another goroutine holds as outer RLock).
+	setClosingDone := make(chan struct{})
+	go func() {
+		sub.SetClosing()
+		close(setClosingDone)
+	}()
+
+	// Give SetClosing time to reach the blocking send (if unpatched).
+	time.Sleep(50 * time.Millisecond)
+
+	// A parallel reader that exercises the real GetSubscriptionsForPeer ->
+	// isPartOf path. isPartOf takes s.RLock() on the SubscriptionDetails.
+	readerDone := make(chan []*SubscriptionDetails, 1)
+	go func() {
+		readerDone <- fmap.GetSubscriptionsForPeer(peerID, protocol.ContentFilter{})
+	}()
+
+	select {
+	case subs := <-readerDone:
+		require.Len(t, subs, 1)
+	case <-time.After(time.Second):
+		t.Fatal("reader blocked: SetClosing is holding SubscriptionDetails lock while sending on unbuffered Closing channel (deadlock)")
+	}
+
+	// After the fix, SetClosing itself should also complete — either because
+	// the channel is buffered(1) and the send is instant, or because a select-
+	// default drops the send when no one is reading. Either is acceptable.
+	select {
+	case <-setClosingDone:
+	case <-time.After(time.Second):
+		t.Fatal("SetClosing never returned without a receiver — inner lock or channel send is still blocking")
+	}
+}
