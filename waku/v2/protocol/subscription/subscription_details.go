@@ -111,11 +111,18 @@ func (s *SubscriptionDetails) Close() error {
 }
 
 func (s *SubscriptionDetails) SetClosing() {
+	// Flip the Closed flag under s.Lock(), but do NOT hold s.mu across the
+	// channel send
 	s.Lock()
-	defer s.Unlock()
-	if !s.Closed {
-		s.Closed = true
-		s.Closing <- true
+	shouldSignal := !s.Closed
+	s.Closed = true
+	s.Unlock()
+
+	if shouldSignal {
+		select {
+		case s.Closing <- true:
+		default:
+		}
 	}
 }
 
