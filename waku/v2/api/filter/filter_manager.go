@@ -42,7 +42,12 @@ type FilterManager struct {
 	filterSubBatchDuration time.Duration
 	incompleteFilterBatch  map[string]filterConfig
 	filterConfigs          appFilterMap // map of application filterID to {aggregatedFilterID, application ContentFilter}
-	waitingToSubQueue      chan filterConfig
+	// waitingToSubQueue holds filter batches that arrived while the node was offline.
+	// Always accessed under mgr.Lock(); a slice (rather than a bounded channel) avoids
+	// a deadlock where SubscribeFilter would block on a full channel while still
+	// holding mgr.Lock(), preventing the only drainer (checkAndProcessQueue, also
+	// invoked under the same lock) from running.
+	waitingToSubQueue      []filterConfig
 	envProcessor           EnevelopeProcessor
 	networkConnType        byte
 }
@@ -77,7 +82,6 @@ func NewFilterManager(ctx context.Context, logger *zap.Logger, minPeersPerFilter
 	mgr.node.SetOnlineChecker(mgr.onlineChecker)
 	mgr.incompleteFilterBatch = make(map[string]filterConfig)
 	mgr.filterConfigs = make(appFilterMap)
-	mgr.waitingToSubQueue = make(chan filterConfig, 100)
 	mgr.networkConnType = initNetworkConnType
 
 	//parsing the subscribe params only to read the batchInterval passed.
@@ -142,8 +146,10 @@ func (mgr *FilterManager) SubscribeFilter(filterID string, cf protocol.ContentFi
 				go mgr.subscribeAndRunLoop(afilter)
 			} else {
 				mgr.logger.Debug("crossed pubsubTopic batchsize and offline, queuing filters", zap.String("agg-filter-id", afilter.ID), zap.String("topic", cf.PubsubTopic), zap.Int("batch-size", len(afilter.contentFilter.ContentTopics)+len(cf.ContentTopics)))
-				// queue existing batch as node is not online
-				mgr.waitingToSubQueue <- afilter
+				// queue existing batch as node is not online.
+				// Safe: caller holds mgr.Lock() so the append is atomic with respect
+				// to checkAndProcessQueue and other mutations.
+				mgr.waitingToSubQueue = append(mgr.waitingToSubQueue, afilter)
 			}
 			afilter = filterConfig{uuid.NewString(), cf}
 			mgr.logger.Debug("creating a new pubsubTopic batch", zap.String("agg-filter-id", afilter.ID), zap.String("topic", cf.PubsubTopic), zap.Stringer("content-filter", cf))
@@ -183,22 +189,31 @@ func (mgr *FilterManager) NetworkChange() {
 	mgr.node.PingPeers() // ping all peers to check if subscriptions are alive
 }
 
+// checkAndProcessQueue drains the offline-pending filter queue. For each batch
+// that matches the given pubsubTopic (or always, when pubsubTopic == ""), a
+// subscribe goroutine is spawned; non-matching batches are retained for a
+// future call. Caller must hold mgr.Lock().
 func (mgr *FilterManager) checkAndProcessQueue(pubsubTopic string) {
-	if len(mgr.waitingToSubQueue) > 0 {
-		for af := range mgr.waitingToSubQueue {
-			// TODO: change the below logic once topic specific health is implemented for lightClients
-			if pubsubTopic == "" || pubsubTopic == af.contentFilter.PubsubTopic {
-				// check if any filter subs are pending and subscribe them
-				mgr.logger.Debug("subscribing from filter queue", zap.String("filter-id", af.ID), zap.Stringer("content-filter", af.contentFilter))
-				go mgr.subscribeAndRunLoop(af)
-			} else {
-				mgr.waitingToSubQueue <- af
-			}
-			if len(mgr.waitingToSubQueue) == 0 {
-				mgr.logger.Debug("no pending subscriptions")
-				break
-			}
+	if len(mgr.waitingToSubQueue) == 0 {
+		return
+	}
+	// Reuse the slice's backing array. Each iteration reads `af` (value copy)
+	// before any potential overwrite at the same index, so partitioning in place
+	// is safe.
+	remaining := mgr.waitingToSubQueue[:0]
+	for _, af := range mgr.waitingToSubQueue {
+		// TODO: change the below logic once topic specific health is implemented for lightClients
+		if pubsubTopic == "" || pubsubTopic == af.contentFilter.PubsubTopic {
+			// check if any filter subs are pending and subscribe them
+			mgr.logger.Debug("subscribing from filter queue", zap.String("filter-id", af.ID), zap.Stringer("content-filter", af.contentFilter))
+			go mgr.subscribeAndRunLoop(af)
+		} else {
+			remaining = append(remaining, af)
 		}
+	}
+	mgr.waitingToSubQueue = remaining
+	if len(mgr.waitingToSubQueue) == 0 {
+		mgr.logger.Debug("no pending subscriptions")
 	}
 }
 
