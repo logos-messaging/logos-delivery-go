@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/waku-org/go-waku/waku/v2/onlinechecker"
 	"github.com/waku-org/go-waku/waku/v2/protocol"
 	"github.com/waku-org/go-waku/waku/v2/protocol/filter"
@@ -33,6 +33,16 @@ func (fc FilterConfig) String() string {
 const filterSubLoopInterval = 5 * time.Second
 const filterSubMaxErrCnt = 3
 
+// filterRateLimitBackoff is how long the apiSub waits before re-issuing a
+// subscribe attempt after at least one peer returned HTTP 429
+// ("filter request rejected due rate limit exceeded"). The waku server uses
+// 429 to ask clients to slow down; the previous implementation flattened the
+// typed peer error into a plain *errors.errorString so the apiSub never saw
+// the signal and kept retrying aggressively. With the typed *SubscribeError
+// (see protocol/filter/subscribe_error.go) the apiSub now honors the signal
+// by suppressing retries for filterRateLimitBackoff after a 429.
+const filterRateLimitBackoff = 60 * time.Second
+
 type Sub struct {
 	ContentFilter         protocol.ContentFilter
 	DataCh                chan *protocol.Envelope
@@ -47,6 +57,16 @@ type Sub struct {
 	resubscribeInProgress bool
 	id                    string
 	errcnt                int
+	// rateLimitedUntil is set when subscribe() observes a *SubscribeError whose
+	// FailedPeers contain at least one HTTP 429. While time.Now().Before(rateLimitedUntil),
+	// subscriptionLoop suppresses retry triggers (ticker push and checkAndResubscribe).
+	// Cleared by a successful subscribe(). Read/written only from the subscriptionLoop
+	// goroutine; no lock needed.
+	rateLimitedUntil time.Time
+	// multiplexWG tracks per-subscription goroutines that forward envelopes from
+	// subDetails.C to DataCh. cleanup() must wait for them before close(DataCh)
+	// to avoid "send on closed channel" panics during teardown.
+	multiplexWG sync.WaitGroup
 }
 
 type subscribeParameters struct {
@@ -119,6 +139,12 @@ func (apiSub *Sub) subscriptionLoop(loopInterval time.Duration) {
 		select {
 		case <-ticker.C:
 			apiSub.errcnt = 0 //reset errorCount
+			if shouldHonourRateLimitBackoff(apiSub.rateLimitedUntil, time.Now()) {
+				apiSub.log.Debug("ticker push suppressed by rate-limit backoff",
+					zap.Time("rate-limited-until", apiSub.rateLimitedUntil),
+				)
+				continue
+			}
 			if apiSub.onlineChecker.IsOnline() && len(apiSub.subs) < apiSub.Config.MaxPeers &&
 				!apiSub.resubscribeInProgress && len(apiSub.closing) < apiSub.Config.MaxPeers {
 				apiSub.closing <- ""
@@ -128,17 +154,27 @@ func (apiSub *Sub) subscriptionLoop(loopInterval time.Duration) {
 			apiSub.cleanup()
 			return
 		case subId := <-apiSub.closing:
+			if shouldHonourRateLimitBackoff(apiSub.rateLimitedUntil, time.Now()) {
+				apiSub.log.Debug("checkAndResubscribe suppressed by rate-limit backoff",
+					zap.Time("rate-limited-until", apiSub.rateLimitedUntil),
+				)
+				continue
+			}
 			if apiSub.errcnt < filterSubMaxErrCnt {
 				apiSub.resubscribeInProgress = true
 				//trigger resubscribe flow for subscription.
 				apiSub.checkAndResubscribe(subId)
+			} else {
+				apiSub.log.Debug("retry suppressed by errcnt bound",
+					zap.Int("errcnt", apiSub.errcnt),
+					zap.Int("filter-sub-max-err-cnt", filterSubMaxErrCnt),
+				)
 			}
 		}
 	}
 }
 
 func (apiSub *Sub) checkAndResubscribe(subId string) {
-
 	var failedPeer peer.ID
 	if subId != "" {
 		apiSub.log.Debug("subscription close and resubscribe", zap.String("sub-id", subId), zap.Stringer("content-filter", apiSub.ContentFilter))
@@ -164,6 +200,9 @@ func (apiSub *Sub) cleanup() {
 			apiSub.log.Info("failed to unsubscribe filter", zap.Error(err))
 		}
 	}
+	// Wait for in-flight multiplex goroutines to exit before closing DataCh,
+	// otherwise they may panic sending to a closed channel.
+	apiSub.multiplexWG.Wait()
 	close(apiSub.DataCh)
 }
 
@@ -188,8 +227,29 @@ func (apiSub *Sub) resubscribe(failedPeer peer.ID) {
 	apiSub.multiplex(subs)
 }
 
-func possibleRecursiveError(err error) bool {
-	return errors.Is(err, utils.ErrNoPeersAvailable) || errors.Is(err, swarm.ErrDialBackoff)
+// shouldIncrementErrCnt reports whether a Sub.subscribe error should count
+// toward the per-5-s-window retry budget filterSubMaxErrCnt. The previous
+// implementation gated only on errors.Is(err, utils.ErrNoPeersAvailable) ||
+// errors.Is(err, swarm.ErrDialBackoff), which matched 0 of 1014 observed
+// production failures because the dominant error from
+// WakuFilterLightNode.Subscribe is a generic *errors.errorString wrapper
+// (or, post-Bug-2-fix, a typed *SubscribeError) — neither of those
+// sentinels. With the bound effectively disabled, every subscribe failure
+// pushed the closing channel and re-entered subscribe, producing a tight
+// retry loop (~1100/sec aggregate observed).
+//
+// Counting any non-nil error makes the 3-error-per-5-s budget actually bind
+// for all failure modes.
+func shouldIncrementErrCnt(err error) bool {
+	return err != nil
+}
+
+// shouldHonourRateLimitBackoff reports whether the apiSub is currently within
+// a rate-limit backoff window and should skip retry triggers. now == rateLimitedUntil
+// is treated as "window has just elapsed" → false (allow retry), so a zero-value
+// rateLimitedUntil (never set) is always false.
+func shouldHonourRateLimitBackoff(rateLimitedUntil, now time.Time) bool {
+	return now.Before(rateLimitedUntil)
 }
 
 func (apiSub *Sub) subscribe(contentFilter protocol.ContentFilter, peerCount int, peersToExclude ...peer.ID) ([]*subscription.SubscriptionDetails, error) {
@@ -206,8 +266,31 @@ func (apiSub *Sub) subscribe(contentFilter protocol.ContentFilter, peerCount int
 	subs, err := apiSub.wf.Subscribe(apiSub.ctx, contentFilter, options...)
 
 	if err != nil {
-		if possibleRecursiveError(err) {
+		apiSub.log.Warn("subscribe error",
+			zap.Error(err),
+			zap.Int("errcnt-before-inc", apiSub.errcnt),
+		)
+
+		// If any peer responded HTTP 429, enter a rate-limit backoff window.
+		// subscriptionLoop's gates will suppress retry triggers for
+		// filterRateLimitBackoff. The typed *SubscribeError comes from
+		// protocol/filter/client.go.
+		var subErr *filter.SubscribeError
+		if errors.As(err, &subErr) && subErr.HasRateLimitError() {
+			apiSub.rateLimitedUntil = time.Now().Add(filterRateLimitBackoff)
+			apiSub.log.Warn("rate-limited by peer, backing off",
+				zap.Duration("backoff", filterRateLimitBackoff),
+				zap.Time("until", apiSub.rateLimitedUntil),
+				zap.Int("failed-peers", len(subErr.FailedPeers)),
+			)
+		}
+
+		if shouldIncrementErrCnt(err) {
 			apiSub.errcnt++
+			apiSub.log.Debug("errcnt incremented",
+				zap.Int("new-errcnt", apiSub.errcnt),
+				zap.Error(err),
+			)
 		}
 		//Inform of error, so that resubscribe can be triggered if required
 		if len(apiSub.closing) < apiSub.Config.MaxPeers {
@@ -221,19 +304,44 @@ func (apiSub *Sub) subscribe(contentFilter protocol.ContentFilter, peerCount int
 		// TODO: Once filter error handling indicates specific error, this can be handled better.
 		return nil, err
 	}
+	// On full success, clear any prior rate-limit backoff so retries can resume
+	// normally if a fresh failure occurs later.
+	apiSub.rateLimitedUntil = time.Time{}
+	apiSub.log.Debug("subscribe success", zap.Int("subs-count", len(subs)))
 	return subs, nil
 }
 
 func (apiSub *Sub) multiplex(subs []*subscription.SubscriptionDetails) {
 	// Multiplex onto single channel
-	// Goroutines will exit once sub channels are closed
+	// Goroutines exit when subDetails.C is closed or apiSub.ctx is done.
+	// cleanup() waits on multiplexWG before close(DataCh) to avoid a race.
 	for _, subDetails := range subs {
 		apiSub.subs[subDetails.ID] = subDetails
+		apiSub.multiplexWG.Add(1)
 		go func(subDetails *subscription.SubscriptionDetails) {
 			defer utils.LogOnPanic()
+			defer apiSub.multiplexWG.Done()
 			apiSub.log.Debug("new multiplex", zap.String("sub-id", subDetails.ID))
-			for env := range subDetails.C {
-				apiSub.DataCh <- env
+			// Both the receive and the send must be cancelable via apiSub.ctx:
+			// during node teardown, UnsubscribeWithSubscription may early-return
+			// from ErrOnNotRunning() without calling sub.Close(), leaving
+			// subDetails.C open forever. A bare `for env := range subDetails.C`
+			// would then block here, multiplexWG.Wait() in cleanup() would block
+			// on it, and the whole filter shutdown would deadlock.
+			for {
+				select {
+				case env, ok := <-subDetails.C:
+					if !ok {
+						return
+					}
+					select {
+					case apiSub.DataCh <- env:
+					case <-apiSub.ctx.Done():
+						return
+					}
+				case <-apiSub.ctx.Done():
+					return
+				}
 			}
 		}(subDetails)
 		go func(subDetails *subscription.SubscriptionDetails) {

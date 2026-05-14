@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -403,7 +402,8 @@ func (wf *WakuFilterLightNode) Subscribe(ctx context.Context, contentFilter prot
 		return nil, err
 	}
 
-	failedContentTopics := []string{}
+	var failedPeersMu sync.Mutex
+	failedPeers := []PeerSubscribeFailure{}
 	subscriptions := make([]*subscription.SubscriptionDetails, 0)
 	for pubSubTopic, cTopics := range pubSubTopicMap {
 		var selectedPeers peer.IDSlice
@@ -429,7 +429,17 @@ func (wf *WakuFilterLightNode) Subscribe(ctx context.Context, contentFilter prot
 			wf.metrics.RecordError(peerNotFoundFailure)
 			wf.log.Error("selecting peer", zap.String("pubSubTopic", pubSubTopic), zap.Strings("contentTopics", cTopics),
 				zap.Error(err))
-			failedContentTopics = append(failedContentTopics, cTopics...)
+			selectErr := err
+			if selectErr == nil {
+				selectErr = errors.New("no peers selected")
+			}
+			failedPeersMu.Lock()
+			failedPeers = append(failedPeers, PeerSubscribeFailure{
+				PeerID:        "",
+				ContentTopics: append([]string(nil), cTopics...),
+				Err:           selectErr,
+			})
+			failedPeersMu.Unlock()
 			continue
 		}
 		var cFilter protocol.ContentFilter
@@ -456,7 +466,13 @@ func (wf *WakuFilterLightNode) Subscribe(ctx context.Context, contentFilter prot
 				if err != nil {
 					wf.log.Error("Failed to subscribe", zap.String("pubSubTopic", pubSubTopic), zap.Strings("contentTopics", cTopics),
 						zap.Error(err))
-					failedContentTopics = append(failedContentTopics, cTopics...)
+					failedPeersMu.Lock()
+					failedPeers = append(failedPeers, PeerSubscribeFailure{
+						PeerID:        ID,
+						ContentTopics: append([]string(nil), cTopics...),
+						Err:           err,
+					})
+					failedPeersMu.Unlock()
 				} else {
 					wf.log.Debug("subscription successful", zap.String("pubSubTopic", pubSubTopic), zap.Strings("contentTopics", cTopics), zap.Stringer("peer", ID))
 					tmpSubs[index] = wf.subscriptions.NewSubscription(ID, cFilter)
@@ -471,11 +487,10 @@ func (wf *WakuFilterLightNode) Subscribe(ctx context.Context, contentFilter prot
 		}
 	}
 
-	if len(failedContentTopics) > 0 {
-		return subscriptions, fmt.Errorf("subscriptions failed for contentTopics: %s", strings.Join(failedContentTopics, ","))
-	} else {
-		return subscriptions, nil
+	if len(failedPeers) > 0 {
+		return subscriptions, &SubscribeError{FailedPeers: failedPeers}
 	}
+	return subscriptions, nil
 }
 
 // FilterSubscription is used to obtain an object from which you could receive messages received via filter protocol
