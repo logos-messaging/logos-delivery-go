@@ -2,20 +2,15 @@ package filter
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/stretchr/testify/require"
 
 	"github.com/waku-org/go-waku/waku/v2/onlinechecker"
 	"github.com/waku-org/go-waku/waku/v2/protocol"
-	pkgfilter "github.com/waku-org/go-waku/waku/v2/protocol/filter"
 	"github.com/waku-org/go-waku/waku/v2/protocol/subscription"
-	"github.com/waku-org/go-waku/waku/v2/utils"
 	"go.uber.org/zap"
 )
 
@@ -192,63 +187,6 @@ func makeNContentTopics(n, seed int) protocol.ContentTopicSet {
 		topics[j] = fmt.Sprintf("/test/%d-%d/proto", seed, j)
 	}
 	return protocol.NewContentTopicSet(topics...)
-}
-
-// TestShouldIncrementErrCnt validates the predicate that gates whether a
-// Sub.subscribe error counts toward the per-5-s-window retry budget
-// (filterSubMaxErrCnt). The previous implementation used possibleRecursiveError,
-// which only matched utils.ErrNoPeersAvailable and swarm.ErrDialBackoff — and
-// observed empirically as 0 increments across 1014 production failures because
-// the dominant production error is a generic *errors.errorString wrapper
-// returned from protocol/filter/client.go (the per-peer aggregator), neither
-// of those sentinels.
-//
-// The fix replaces the predicate with one that counts every non-nil error.
-// This test will fail to compile against the unpatched filter.go (the
-// shouldIncrementErrCnt symbol does not exist there).
-func TestShouldIncrementErrCnt(t *testing.T) {
-	cases := []struct {
-		name   string
-		err    error
-		expect bool
-	}{
-		{name: "nil → false", err: nil, expect: false},
-		{
-			name:   "plain *errors.errorString (the dominant production error)",
-			err:    errors.New("subscriptions failed for contentTopics: /waku/1/0xabcdef/rfc26"),
-			expect: true,
-		},
-		{
-			name:   "utils.ErrNoPeersAvailable (was counted before)",
-			err:    utils.ErrNoPeersAvailable,
-			expect: true,
-		},
-		{
-			name:   "swarm.ErrDialBackoff (was counted before)",
-			err:    swarm.ErrDialBackoff,
-			expect: true,
-		},
-		{
-			name:   "context.DeadlineExceeded (request timeout)",
-			err:    context.DeadlineExceeded,
-			expect: true,
-		},
-		{
-			name:   "wrapped via fmt.Errorf %w (io.EOF unwrap chain)",
-			err:    fmt.Errorf("wrapped: %w", io.EOF),
-			expect: true,
-		},
-		{
-			name:   "*FilterError{Code: 429} (rate limit from server)",
-			err:    &pkgfilter.FilterError{Code: 429, Message: "rate limited"},
-			expect: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expect, shouldIncrementErrCnt(tc.err))
-		})
-	}
 }
 
 // TestShouldHonourRateLimitBackoff covers the pure predicate that gates retry

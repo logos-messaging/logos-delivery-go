@@ -227,23 +227,6 @@ func (apiSub *Sub) resubscribe(failedPeer peer.ID) {
 	apiSub.multiplex(subs)
 }
 
-// shouldIncrementErrCnt reports whether a Sub.subscribe error should count
-// toward the per-5-s-window retry budget filterSubMaxErrCnt. The previous
-// implementation gated only on errors.Is(err, utils.ErrNoPeersAvailable) ||
-// errors.Is(err, swarm.ErrDialBackoff), which matched 0 of 1014 observed
-// production failures because the dominant error from
-// WakuFilterLightNode.Subscribe is a generic *errors.errorString wrapper
-// (or, post-Bug-2-fix, a typed *SubscribeError) — neither of those
-// sentinels. With the bound effectively disabled, every subscribe failure
-// pushed the closing channel and re-entered subscribe, producing a tight
-// retry loop (~1100/sec aggregate observed).
-//
-// Counting any non-nil error makes the 3-error-per-5-s budget actually bind
-// for all failure modes.
-func shouldIncrementErrCnt(err error) bool {
-	return err != nil
-}
-
 // shouldHonourRateLimitBackoff reports whether the apiSub is currently within
 // a rate-limit backoff window and should skip retry triggers. now == rateLimitedUntil
 // is treated as "window has just elapsed" → false (allow retry), so a zero-value
@@ -285,13 +268,12 @@ func (apiSub *Sub) subscribe(contentFilter protocol.ContentFilter, peerCount int
 			)
 		}
 
-		if shouldIncrementErrCnt(err) {
-			apiSub.errcnt++
-			apiSub.log.Debug("errcnt incremented",
-				zap.Int("new-errcnt", apiSub.errcnt),
-				zap.Error(err),
-			)
-		}
+		apiSub.errcnt++
+		apiSub.log.Debug("errcnt incremented",
+			zap.Int("new-errcnt", apiSub.errcnt),
+			zap.Error(err),
+		)
+
 		//Inform of error, so that resubscribe can be triggered if required
 		if len(apiSub.closing) < apiSub.Config.MaxPeers {
 			apiSub.closing <- ""
