@@ -47,9 +47,9 @@ type FilterManager struct {
 	// a deadlock where SubscribeFilter would block on a full channel while still
 	// holding mgr.Lock(), preventing the only drainer (checkAndProcessQueue, also
 	// invoked under the same lock) from running.
-	waitingToSubQueue      []filterConfig
-	envProcessor           EnevelopeProcessor
-	networkConnType        byte
+	waitingToSubQueue []filterConfig
+	envProcessor      EnevelopeProcessor
+	networkConnType   byte
 }
 
 type SubDetails struct {
@@ -187,6 +187,19 @@ func (mgr *FilterManager) subscribeAndRunLoop(f filterConfig) {
 // This should retrigger a ping to verify if subscriptions are fine.
 func (mgr *FilterManager) NetworkChange() {
 	mgr.node.PingPeers() // ping all peers to check if subscriptions are alive
+}
+
+// SetBackgroundMode notifies all active subscriptions of the app's visibility
+// state. When background=true, subscriptions suppress renewal keepalives to
+// avoid waking the LTE radio while the screen is locked. When background=false
+// (returning to foreground), each subscription immediately attempts to
+// resubscribe if its filter has expired.
+func (mgr *FilterManager) SetBackgroundMode(background bool) {
+	mgr.Lock()
+	defer mgr.Unlock()
+	for _, subDetails := range mgr.filterSubscriptions {
+		subDetails.sub.SetBackgroundMode(background)
+	}
 }
 
 // checkAndProcessQueue drains the offline-pending filter queue. For each batch
