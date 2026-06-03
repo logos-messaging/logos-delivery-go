@@ -197,9 +197,12 @@ func (mgr *FilterManager) NetworkChange() {
 func (mgr *FilterManager) SetBackgroundMode(background bool) {
 	mgr.Lock()
 	defer mgr.Unlock()
+	// Gate subscription renewal (api/filter layer)
 	for _, subDetails := range mgr.filterSubscriptions {
 		subDetails.sub.SetBackgroundMode(background)
 	}
+	// Gate health-check pings (protocol/filter layer) — the dominant LTE radio wakeup source
+	mgr.node.SetBackgroundMode(background)
 }
 
 // checkAndProcessQueue drains the offline-pending filter queue. For each batch
