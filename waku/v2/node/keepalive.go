@@ -90,11 +90,13 @@ func (w *WakuNode) startKeepAlive(ctx context.Context, randomPeersPingDuration t
 				lastTimeExecuted = w.timesource.Now()
 				w.log.Warn("keep alive hasnt been executed recently. Killing all connections")
 				disconnectAllPeers(w.host, w.log)
+				w.peerConnector.ResetBackoff()
 				continue
 			} else if iterationFailure >= maxAllowedSubsequentPingFailures {
 				iterationFailure = 0
 				w.log.Warn("Pinging random peers failed, node is likely disconnected. Killing all connections")
 				disconnectAllPeers(w.host, w.log)
+				w.peerConnector.ResetBackoff()
 				continue
 			}
 

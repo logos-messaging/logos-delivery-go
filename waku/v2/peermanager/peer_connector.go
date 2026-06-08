@@ -218,6 +218,16 @@ func (c *PeerConnectionStrategy) canDialPeer(pi peer.AddrInfo) bool {
 	return true
 }
 
+// ResetBackoff clears all accumulated per-peer connection backoffs so that
+// every known peer can be retried immediately on the next connection attempt.
+// Call this after a recovery event (e.g. sleep/wake, all pings failed) so that
+// stale hour-long backoffs do not prevent reconnection once the network is back.
+func (c *PeerConnectionStrategy) ResetBackoff() {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	c.cache.Purge()
+}
+
 func (c *PeerConnectionStrategy) addConnectionBackoff(peerID peer.ID) {
 	c.mux.Lock()
 	defer c.mux.Unlock()
