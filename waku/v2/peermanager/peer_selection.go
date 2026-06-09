@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"go.uber.org/zap"
@@ -91,6 +92,10 @@ func (pm *PeerManager) SelectRandom(criteria PeerSelectionCriteria) (peer.IDSlic
 		filteredPeers = pm.host.Peerstore().(wps.WakuPeerstore).PeersByPubSubTopics(criteria.PubsubTopics, filteredPeers...)
 	}
 
+	// Prefer peers we are already connected to, so we don't churn on dialing
+	// stale/unreachable peers learned via discovery or peer-exchange.
+	filteredPeers = pm.preferConnectedPeers(filteredPeers)
+
 	//Not passing excludePeers as filterPeers are already considering excluded ones.
 	randomPeers, err := selectRandomPeers(filteredPeers, nil, min(criteria.MaxPeers, len(peerIDs)))
 	if err != nil && len(peerIDs) == 0 {
@@ -119,6 +124,28 @@ func getRandom(filter PeerSet, count int, excludePeers PeerSet) (PeerSet, error)
 		return nil, utils.ErrNoPeersAvailable
 	}
 	return selectedPeers, nil
+}
+
+// preferConnectedPeers returns the subset of the given peers that we are
+// currently connected to. If none are connected it returns the input unchanged.
+//
+// This biases peer selection toward reachable peers (e.g. an already-connected
+// fleet/service node) instead of stale or unreachable peers learned via
+// discv5/peer-exchange. Without this, selection is connectedness-blind and a
+// light node can repeatedly pick dead peers for filter/lightpush, churning on
+// failed dials and missing messages while a perfectly good connected peer is
+// available (see status-im/status-go#7513).
+func (pm *PeerManager) preferConnectedPeers(peers peer.IDSlice) peer.IDSlice {
+	connected := make(peer.IDSlice, 0, len(peers))
+	for _, p := range peers {
+		if pm.host.Network().Connectedness(p) == network.Connected {
+			connected = append(connected, p)
+		}
+	}
+	if len(connected) > 0 {
+		return connected
+	}
+	return peers
 }
 
 // selects count random peers from list of peers
@@ -172,6 +199,8 @@ func (pm *PeerManager) selectServicePeer(criteria PeerSelectionCriteria) (PeerSe
 		}
 		slot.mu.RUnlock()
 		selectedPeers := pm.host.Peerstore().(wps.WakuPeerstore).PeersByPubSubTopics(criteria.PubsubTopics, keys...)
+		// Prefer already-connected service peers over stale/unreachable ones.
+		selectedPeers = pm.preferConnectedPeers(selectedPeers)
 		tmpPeers, err := selectRandomPeers(selectedPeers, criteria.ExcludePeers, criteria.MaxPeers)
 		for tmpPeer := range tmpPeers {
 			peers[tmpPeer] = struct{}{}
