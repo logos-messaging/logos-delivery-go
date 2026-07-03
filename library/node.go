@@ -261,11 +261,16 @@ func Start(instance *WakuInstance) error {
 		return err
 	}
 
-	instance.ctx, instance.cancel = context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 
-	if err := instance.node.Start(instance.ctx); err != nil {
+	if err := instance.node.Start(ctx); err != nil {
+		cancel()
 		return err
 	}
+
+	// Record started state only after node.Start() succeeds, so a failed Start()
+	// leaves IsStarted() false and Free() will not Stop() a node that never ran.
+	instance.ctx, instance.cancel = ctx, cancel
 
 	if instance.node.DiscV5() != nil {
 		if err := instance.node.DiscV5().Start(context.Background()); err != nil {

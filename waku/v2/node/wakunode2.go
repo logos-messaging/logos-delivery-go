@@ -533,6 +533,12 @@ func (w *WakuNode) Stop() {
 
 	w.stopWithTimeout(w.bcaster.Stop, "bcaster", 5*time.Second)
 
+	// Start() can fail before the host is created (e.g. port in use), leaving a
+	// partially-started node; guard so Stop() cannot nil-dereference w.host.
+	if w.host == nil {
+		return
+	}
+
 	defer w.connectionNotif.Close()
 	defer w.addressChangesSub.Close()
 
