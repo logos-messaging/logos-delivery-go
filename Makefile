@@ -48,29 +48,29 @@ all: build
 deps: lint-install
 
 build-with-race:
-	${GOCMD} build -race -tags="${BUILD_TAGS}" $(BUILD_FLAGS) -o build/waku ./cmd/waku
+	"${GOCMD}" build -race -tags="${BUILD_TAGS}" $(BUILD_FLAGS) -o build/waku ./cmd/waku
 
 build:
-	${GOCMD} build -tags="${BUILD_TAGS}" $(BUILD_FLAGS) -o build/waku ./cmd/waku
+	"${GOCMD}" build -tags="${BUILD_TAGS}" $(BUILD_FLAGS) -o build/waku ./cmd/waku
 
 chat2:
 	pushd ./examples/chat2 && \
-	${GOCMD} build -o ../../build/chat2 . && \
+	"${GOCMD}" build -o ../../build/chat2 . && \
 	popd
 
 vendor:
-	${GOCMD} mod tidy
-	cd examples/basic-light-client && ${GOCMD} mod tidy
-	cd examples/basic-relay && ${GOCMD} mod tidy
-	cd examples/chat2-reliable && ${GOCMD} mod tidy
-	cd examples/chat2 && ${GOCMD} mod tidy
-	cd examples/filter2 && ${GOCMD} mod tidy
-	cd examples/noise && ${GOCMD} mod tidy
-	cd examples/rln && ${GOCMD} mod tidy
+	"${GOCMD}" mod tidy
+	cd examples/basic-light-client && "${GOCMD}" mod tidy
+	cd examples/basic-relay && "${GOCMD}" mod tidy
+	cd examples/chat2-reliable && "${GOCMD}" mod tidy
+	cd examples/chat2 && "${GOCMD}" mod tidy
+	cd examples/filter2 && "${GOCMD}" mod tidy
+	cd examples/noise && "${GOCMD}" mod tidy
+	cd examples/rln && "${GOCMD}" mod tidy
 
 lint-install:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | \
-		bash -s -- -b $(shell ${GOCMD} env GOPATH)/bin v1.59.1
+		bash -s -- -b $(shell "${GOCMD}" env GOPATH)/bin v1.59.1
 
 lint:
 	@echo "lint"
@@ -81,15 +81,15 @@ lint-full:
 	@golangci-lint run ./... --config=./.golangci.full.yaml 
 
 test-with-race:
-	${GOCMD} test -race -timeout 300s ./waku/... ./cmd/waku/server/...
+	"${GOCMD}" test -race -timeout 300s ./waku/... ./cmd/waku/server/...
 
 test:
-	${GOCMD} test -timeout 300s ./waku/... ./cmd/waku/server/... ./...
+	"${GOCMD}" test -timeout 300s ./waku/... ./cmd/waku/server/... ./...
 
 test-ci: test
 
 generate:
-	${GOCMD} generate ./...
+	"${GOCMD}" generate ./...
 
 # build a docker image for the fleet
 docker-image: DOCKER_IMAGE_TAG ?= latest
@@ -123,7 +123,7 @@ build-example: build-example-basic-relay build-example-basic-light-client build-
 
 static-library:
 	@echo "Building static library..."
-	${GOCMD} build \
+	"${GOCMD}" build \
 		-buildmode=c-archive \
 		-tags="${BUILD_TAGS} gowaku_no_rln" \
 		-o ./build/lib/libgowaku.a \
@@ -139,7 +139,7 @@ endif
 dynamic-library:
 	@echo "Building shared library..."
 	rm -f ./build/lib/libgowaku.$(GOBIN_SHARED_LIB_EXT)*
-	$(GOBIN_SHARED_LIB_CFLAGS) $(GOBIN_SHARED_LIB_CGO_LDFLAGS) ${GOCMD} build \
+	$(GOBIN_SHARED_LIB_CFLAGS) $(GOBIN_SHARED_LIB_CGO_LDFLAGS) "${GOCMD}" build \
 		-buildmode=c-shared \
 		-tags="${BUILD_TAGS} gowaku_no_rln" \
 		-o ./build/lib/libgowaku.$(GOBIN_SHARED_LIB_EXT) \
@@ -160,27 +160,27 @@ endif
 mobile-android:
 	@echo "Android target: ${ANDROID_TARGET} (override with ANDROID_TARGET var)"
 	gomobile init && \
-	${GOCMD} get -d golang.org/x/mobile/cmd/gomobile && \
+	"${GOCMD}" get -d golang.org/x/mobile/cmd/gomobile && \
 	CGO=1 gomobile bind -v -target=android -androidapi=${ANDROID_TARGET} -ldflags="-s -w" -tags="${BUILD_TAGS} gowaku_no_rln" $(BUILD_FLAGS) -o ./build/lib/gowaku.aar ./library/mobile
 	@echo "Android library built:"
 	@ls -la ./build/lib/*.aar ./build/lib/*.jar
 
 mobile-ios:
 	gomobile init && \
-	${GOCMD} get -d golang.org/x/mobile/cmd/gomobile && \
+	"${GOCMD}" get -d golang.org/x/mobile/cmd/gomobile && \
 	gomobile bind -target=ios -ldflags="-s -w" -tags="nowatchdog ${BUILD_TAGS} gowaku_no_rln" $(BUILD_FLAGS) -o ./build/lib/Gowaku.xcframework ./library/mobile
 	@echo "IOS library built:"
 	@ls -la ./build/lib/*.xcframework
 
 install-xtools:
-	${GOCMD} install golang.org/x/tools/...@v0.1.10
+	"${GOCMD}" install golang.org/x/tools/...@v0.1.10
 
 install-bindata:
-	${GOCMD} install github.com/kevinburke/go-bindata/go-bindata@v3.13.0
+	"${GOCMD}" install github.com/kevinburke/go-bindata/go-bindata@v3.13.0
 
 install-gomobile: install-xtools
-	${GOCMD} install golang.org/x/mobile/cmd/gomobile@v0.0.0-20220518205345-8578da9835fd
-	${GOCMD} install golang.org/x/mobile/cmd/gobind@v0.0.0-20220518205345-8578da9835fd
+	"${GOCMD}" install golang.org/x/mobile/cmd/gomobile@v0.0.0-20220518205345-8578da9835fd
+	"${GOCMD}" install golang.org/x/mobile/cmd/gobind@v0.0.0-20220518205345-8578da9835fd
 
 build-linux-pkg:
 	docker build --build-arg UID=${UID} --build-arg GID=${GID} -f ./scripts/linux/Dockerfile -t wakuorg/gowaku-linux-pkgs:latest .
@@ -197,24 +197,24 @@ stop-ganache:
 
 test-onchain: BUILD_TAGS += include_onchain_tests
 test-onchain:
-	${GOCMD} test -v -count 1 -tags="${BUILD_TAGS}" github.com/waku-org/go-waku/waku/v2/protocol/rln
+	"${GOCMD}" test -v -count 1 -tags="${BUILD_TAGS}" github.com/waku-org/go-waku/waku/v2/protocol/rln
 
 test-onchain-with-race:
-	${GOCMD} test -race -v -count 1 -tags="${BUILD_TAGS}" github.com/waku-org/go-waku/waku/v2/protocol/rln
+	"${GOCMD}" test -race -v -count 1 -tags="${BUILD_TAGS}" github.com/waku-org/go-waku/waku/v2/protocol/rln
 
 test-postgres: PG_BUILD_TAGS = ${BUILD_TAGS} include_postgres_tests
 test-postgres:
-	${GOCMD} test -p 1 -v -count 1 -tags="${PG_BUILD_TAGS}" github.com/waku-org/go-waku/waku/persistence/...
+	"${GOCMD}" test -p 1 -v -count 1 -tags="${PG_BUILD_TAGS}" github.com/waku-org/go-waku/waku/persistence/...
 
 test-postgres-with-race:
-	${GOCMD} test -race -p 1 -v -count 1 -tags="${PG_BUILD_TAGS}" github.com/waku-org/go-waku/waku/persistence/...
+	"${GOCMD}" test -race -p 1 -v -count 1 -tags="${PG_BUILD_TAGS}" github.com/waku-org/go-waku/waku/persistence/...
 
 test-filter:
-	${GOCMD} test -v github.com/waku-org/go-waku/waku/v2/protocol/filter -run TestFilterSuite -count=1
+	"${GOCMD}" test -v github.com/waku-org/go-waku/waku/v2/protocol/filter -run TestFilterSuite -count=1
 
 test-filter-api:
-	${GOCMD} test -v github.com/waku-org/go-waku/waku/v2/api -run TestFilterApiSuite
+	"${GOCMD}" test -v github.com/waku-org/go-waku/waku/v2/api -run TestFilterApiSuite
 
 TEST_STOREV3_NODE ?=
 test-storev3:
-	TEST_STOREV3_NODE=${TEST_STOREV3_NODE} ${GOCMD} test -p 1 -v -count 1 -tags="${BUILD_TAGS} include_storev3_tests" github.com/waku-org/go-waku/waku/v2/protocol/store/...
+	TEST_STOREV3_NODE=${TEST_STOREV3_NODE} "${GOCMD}" test -p 1 -v -count 1 -tags="${BUILD_TAGS} include_storev3_tests" github.com/waku-org/go-waku/waku/v2/protocol/store/...
