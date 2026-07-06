@@ -250,7 +250,7 @@ func (sub *SubscribersMap) cleanUp(ctx context.Context, cleanupInterval time.Dur
 			sub.Lock()
 			for peerID, lastSeen := range sub.lastSeen {
 				elapsedTime := time.Since(lastSeen)
-				if elapsedTime < sub.timeout {
+				if elapsedTime > sub.timeout {
 					_ = sub.deleteAll(peerID)
 				}
 
