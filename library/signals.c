@@ -9,9 +9,9 @@
 
 typedef void (*callback)(int retCode, const char *jsonEvent, void* userData);
 
-bool ServiceSignalEvent(void *cb, const char *jsonEvent) {
+bool ServiceSignalEvent(void *cb, const char *jsonEvent, void *userData) {
 	if (cb) {
-		((callback)cb)(0, jsonEvent, NULL);
+		((callback)cb)(0, jsonEvent, userData);
 	}
 
 	return true;

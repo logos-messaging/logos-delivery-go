@@ -287,8 +287,8 @@ func waku_default_pubsub_topic(cb C.WakuCallBack, userData unsafe.Pointer) C.int
 }
 
 // Register callback to act as signal handler and receive application signals
-// (in JSON) which are used to react to asynchronous events in waku. The function
-// signature for the callback should be `void myCallback(char* signalJSON)`
+// (in JSON) which are used to react to asynchronous events in waku. The callback
+// is invoked as `myCallback(0, signalJSON, NULL)`.
 //
 //export waku_set_event_callback
 func waku_set_event_callback(ctx unsafe.Pointer, cb C.WakuCallBack) {
@@ -298,6 +298,19 @@ func waku_set_event_callback(ctx unsafe.Pointer, cb C.WakuCallBack) {
 	}
 
 	library.SetEventCallback(instance, unsafe.Pointer(cb))
+}
+
+// Same as waku_set_event_callback, but the callback receives the given userData
+// as its user_data argument instead of NULL.
+//
+//export waku_set_event_callback_with_user_data
+func waku_set_event_callback_with_user_data(ctx unsafe.Pointer, cb C.WakuCallBack, userData unsafe.Pointer) {
+	instance, err := getInstance(ctx)
+	if err != nil {
+		panic(err.Error()) // TODO: refactor to return an error instead of panic
+	}
+
+	library.SetEventCallbackWithUserData(instance, unsafe.Pointer(cb), userData)
 }
 
 // Retrieve the list of peers known by the waku node
