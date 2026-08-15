@@ -47,7 +47,7 @@ func (r *RendezvousPointIterator) Next(ctx context.Context) <-chan *RendezvousPo
 	result := make(chan *RendezvousPoint, 1)
 
 	if len(dialableRP) > 0 {
-		result <- r.rendezvousPoints[rand.Intn(len(r.rendezvousPoints))] // nolint: gosec
+		result <- dialableRP[rand.Intn(len(dialableRP))] // nolint: gosec
 	} else {
 		if len(r.rendezvousPoints) > 0 {
 			sort.Slice(r.rendezvousPoints, func(i, j int) bool {
