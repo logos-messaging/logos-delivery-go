@@ -187,7 +187,7 @@ func TestWakuLightPushNoPeers(t *testing.T) {
 // Node1 receive the message
 
 func TestWakuLightPushAutoSharding(t *testing.T) {
-	contentTopic := "0/test/1/testTopic/proto"
+	contentTopic := "/0/test/1/testTopic/proto"
 	cTopic1, err := protocol.StringToContentTopic(contentTopic)
 	require.NoError(t, err)
 	//Computing pubSubTopic only for filterFullNode.

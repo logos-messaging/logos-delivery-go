@@ -99,7 +99,7 @@ func (s *FilterTestSuite) TestAutoShard() {
 	s.ctx = ctx
 	s.ctxCancel = cancel
 
-	cTopic1Str := "0/test/1/testTopic/proto"
+	cTopic1Str := "/0/test/1/testTopic/proto"
 	cTopic1, err := protocol.StringToContentTopic(cTopic1Str)
 	s.Require().NoError(err)
 	//Computing pubSubTopic only for filterFullNode.
@@ -136,7 +136,7 @@ func (s *FilterTestSuite) TestAutoShard() {
 	// Test ModifySubscription Subscribe to another content_topic
 	s.Log.Info("Testing Autoshard:ModifySubscription")
 
-	newContentTopic := "0/test/1/testTopic1/proto"
+	newContentTopic := "/0/test/1/testTopic1/proto"
 	s.subscribe("", newContentTopic, s.FullNodeHost.ID())
 
 	s.waitForMsg(&WakuMsg{s.TestTopic, newContentTopic, ""})
