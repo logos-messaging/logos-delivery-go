@@ -170,5 +170,8 @@ func init() {
 }
 
 func (a pingSort) Less(i, j int) bool {
-	return connectednessPriority[a[i].connectedness] < connectednessPriority[a[j].connectedness] && a[i].rtt < a[j].rtt
+	if connectednessPriority[a[i].connectedness] != connectednessPriority[a[j].connectedness] {
+		return connectednessPriority[a[i].connectedness] < connectednessPriority[a[j].connectedness]
+	}
+	return a[i].rtt < a[j].rtt
 }
