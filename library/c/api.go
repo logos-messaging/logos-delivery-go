@@ -15,6 +15,7 @@ typedef void (*WakuCallBack) (int ret_code, const char* msg, void * user_data);
 import "C"
 import (
 	"fmt"
+	"strconv"
 	"unsafe"
 
 	"github.com/waku-org/go-waku/library"
@@ -286,9 +287,25 @@ func waku_default_pubsub_topic(cb C.WakuCallBack, userData unsafe.Pointer) C.int
 	return onSuccesfulResponse(library.DefaultPubsubTopic(), cb, userData)
 }
 
+// Retrieve the id of a waku instance, as a decimal string. The id is unique for
+// the lifetime of the process and is never reused. It is reported as the
+// `instanceId` field of every signal the instance emits, which lets a consumer
+// running several instances route a signal back to the one that emitted it.
+//
+//export waku_instance_id
+func waku_instance_id(ctx unsafe.Pointer, cb C.WakuCallBack, userData unsafe.Pointer) C.int {
+	instance, err := getInstance(ctx)
+	if err != nil {
+		return onError(err, cb, userData)
+	}
+
+	return onSuccesfulResponse(strconv.FormatUint(uint64(instance.ID), 10), cb, userData)
+}
+
 // Register callback to act as signal handler and receive application signals
-// (in JSON) which are used to react to asynchronous events in waku. The function
-// signature for the callback should be `void myCallback(char* signalJSON)`
+// (in JSON) which are used to react to asynchronous events in waku. The callback
+// is invoked as `myCallback(0, signalJSON, NULL)`. The `instanceId` field of
+// signalJSON identifies the instance the signal came from.
 //
 //export waku_set_event_callback
 func waku_set_event_callback(ctx unsafe.Pointer, cb C.WakuCallBack) {

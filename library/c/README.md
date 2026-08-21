@@ -200,6 +200,7 @@ When an event is emitted, this callback will be triggered receiving a JSON strin
 
 ```ts
 {
+    instanceId: number;
     type: string;
     event: any;
 }
@@ -207,6 +208,7 @@ When an event is emitted, this callback will be triggered receiving a JSON strin
 
 Fields:
 
+- `instanceId`: Id of the waku instance that emitted the signal.
 - `type`: Type of signal being emitted. Currently, only `message` is available.
 - `event`: Format depends on the type of signal.
 
@@ -214,6 +216,7 @@ For example:
 
 ```json
 {
+  "instanceId": 0,
   "type": "message",
   "event": {
     "pubsubTopic": "/waku/2/default-waku/proto",
@@ -248,15 +251,39 @@ Type of `event` field for a `message` event:
 - `messageId`: The message id.
 - `wakuMessage`: The message in [`JsonMessage`](#jsonmessage-type) format.
 
-### `extern void waku_set_event_callback(WakuCallBack cb)`
+### `extern int waku_instance_id(void* ctx, WakuCallBack cb, void* userData)`
+
+Get the id of a waku instance. The id is unique for the lifetime of the process and is
+never reused, so it is safe to keep as a key for as long as the instance lives.
+
+**Parameters**
+
+1. `void* ctx`: waku node instance, returned by `waku_init`.
+2. `WakuCallBack cb`: callback to be executed.
+3. `void* userData`: used to pass custom information to the callback function
+
+**Returns**
+
+A status code. Refer to the [`Status codes`](#status-codes) section for possible values.
+If the function execution fails, `cb` will receive a string containing an error.
+If the function is executed succesfully, `cb` will receive the id as a decimal string,
+for example `0`. It matches the `instanceId` field of every
+[`JsonSignal`](#jsonsignal-type) the instance emits.
+
+### `extern void waku_set_event_callback(void* ctx, WakuCallBack cb)`
 
 Register callback to act as event handler and receive application signals,
 which are used to react to asynchronous events in Waku.
 
 **Parameters**
 
-1. `WakuCallBack cb`: callback that will be executed when an async event is emitted.
-  The function signature for the callback should be `void myCallback(char* signal, void * user_data)`
+1. `void* ctx`: waku node instance, returned by `waku_init`.
+2. `WakuCallBack cb`: callback that will be executed when an async event is emitted.
+  It is invoked as `cb(0, signalJSON, NULL)`, where `signalJSON` is a
+  [`JsonSignal`](#jsonsignal-type).
+
+To handle signals from several instances, register the same callback on each of them
+and dispatch on the `instanceId` field of the signal.
 
 ## Node management
 

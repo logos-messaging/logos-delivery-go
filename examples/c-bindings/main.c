@@ -56,7 +56,7 @@ void callBack(int ret, const char *signal, void *user_data)
 
   // Example signal:
   /*{
-      "nodeId":1,
+      "instanceId":0,
       "type":"message",
       "event":{
         "pubsubTopic":"/waku/2/default-waku/proto",

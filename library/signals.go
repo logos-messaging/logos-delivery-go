@@ -22,22 +22,26 @@ var mobileSignalHandler MobileSignalHandler
 
 // signalEnvelope is a general signal sent upward from node to app
 type signalEnvelope struct {
-	Type  string      `json:"type"`
-	Event interface{} `json:"event"`
+	// InstanceID identifies the waku instance that emitted the signal, so that
+	// a consumer running several instances can route it to the right one.
+	InstanceID uint        `json:"instanceId"`
+	Type       string      `json:"type"`
+	Event      interface{} `json:"event"`
 }
 
 // NewEnvelope creates new envlope of given type and event payload.
-func newEnvelope(signalType string, event interface{}) *signalEnvelope {
+func newEnvelope(instanceID uint, signalType string, event interface{}) *signalEnvelope {
 	return &signalEnvelope{
-		Type:  signalType,
-		Event: event,
+		InstanceID: instanceID,
+		Type:       signalType,
+		Event:      event,
 	}
 }
 
 // send sends application signal (in JSON) upwards to application (via default notification handler)
 func send(instance *WakuInstance, signalType string, event interface{}) {
 
-	signal := newEnvelope(signalType, event)
+	signal := newEnvelope(instance.ID, signalType, event)
 	data, err := json.Marshal(&signal)
 	if err != nil {
 		fmt.Println("marshal signal error", err)

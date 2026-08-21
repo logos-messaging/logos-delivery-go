@@ -35,7 +35,10 @@ import (
 type WakuInstance struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	ID     uint
+
+	// ID identifies this instance. It is unique for the lifetime of the process
+	// and never reused, and is reported in every signal the instance emits.
+	ID uint
 
 	node                *node.WakuNode
 	cb                  unsafe.Pointer
@@ -46,6 +49,7 @@ type WakuInstance struct {
 
 var wakuInstances map[uint]*WakuInstance
 var wakuInstancesMutex sync.RWMutex
+var nextInstanceID uint
 
 var errWakuNodeNotReady = errors.New("not initialized")
 var errWakuNodeAlreadyConfigured = errors.New("already configured")
@@ -69,7 +73,9 @@ func Init() *WakuInstance {
 	wakuInstancesMutex.Lock()
 	defer wakuInstancesMutex.Unlock()
 
-	id := uint(len(wakuInstances))
+	id := nextInstanceID
+	nextInstanceID++
+
 	instance := &WakuInstance{
 		ID: id,
 	}
