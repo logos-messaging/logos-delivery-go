@@ -296,9 +296,10 @@ func Start(instance *WakuInstance) error {
 				return
 			case item, ok := <-instance.connCh:
 				if !ok {
+					utils.Logger().Debug("connection notification channel closed, stopping listener")
 					return
 				}
-				send(instance, "conStatus", toConnectionStatus(item))
+				send(instance, "connectionStatus", toConnectionStatus(item))
 			}
 		}
 	}()
