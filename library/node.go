@@ -39,6 +39,7 @@ type WakuInstance struct {
 
 	node                *node.WakuNode
 	cb                  unsafe.Pointer
+	connCh              chan node.PeerConnection
 	mobileSignalHandler MobileSignalHandler
 
 	relayTopics []string
@@ -127,6 +128,18 @@ func validateInstance(instance *WakuInstance, validationType ValidationType) err
 	return nil
 }
 
+type connectionStatMsg struct {
+	PeerID    string `json:"peerId"`
+	Connected bool   `json:"connected"`
+}
+
+func toConnectionStatus(msg node.PeerConnection) *connectionStatMsg {
+	return &connectionStatMsg{
+		PeerID:    msg.PeerID.String(),
+		Connected: msg.Connected,
+	}
+}
+
 // NewNode initializes a waku node. Receives a JSON string containing the configuration, and use default values for those config items not specified
 func NewNode(instance *WakuInstance, configJSON string) error {
 	if err := validateInstance(instance, NotConfigured); err != nil {
@@ -160,12 +173,15 @@ func NewNode(instance *WakuInstance, configJSON string) error {
 		}
 	}
 
+	instance.connCh = make(chan node.PeerConnection, 10)
+
 	opts := []node.WakuNodeOption{
 		node.WithPrivateKey(prvKey),
 		node.WithHostAddress(hostAddr),
 		node.WithKeepAlive(10*time.Second, time.Duration(*config.KeepAliveInterval)*time.Second),
 		node.WithClusterID(uint16(config.ClusterID)),
 		node.WithShards(config.Shards),
+		node.WithConnectionNotification(instance.connCh),
 	}
 
 	if *config.EnableRelay {
@@ -272,6 +288,22 @@ func Start(instance *WakuInstance) error {
 	// leaves IsStarted() false and Free() will not Stop() a node that never ran.
 	instance.ctx, instance.cancel = ctx, cancel
 
+	go func() {
+		defer utils.LogOnPanic()
+		for {
+			select {
+			case <-instance.ctx.Done():
+				return
+			case item, ok := <-instance.connCh:
+				if !ok {
+					utils.Logger().Debug("connection notification channel closed, stopping listener")
+					return
+				}
+				send(instance, "connectionStatus", toConnectionStatus(item))
+			}
+		}
+	}()
+
 	if instance.node.DiscV5() != nil {
 		if err := instance.node.DiscV5().Start(context.Background()); err != nil {
 			stop(instance)
@@ -296,7 +328,14 @@ func Stop(instance *WakuInstance) error {
 		return err
 	}
 
+	// stop() calls node.Stop() which unregisters ConnectionNotifier via StopNotify
+	// before host.Close() fires any disconnect events. Only after that is it safe
+	// to close connCh — closing it first causes a send-on-closed-channel panic.
 	stop(instance)
+	if instance.connCh != nil {
+		close(instance.connCh)
+		instance.connCh = nil
+	}
 
 	return nil
 }
