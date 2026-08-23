@@ -4,7 +4,7 @@ package library
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdlib.h>
-extern bool ServiceSignalEvent(void *cb, const char *jsonEvent);
+extern bool ServiceSignalEvent(void *cb, const char *jsonEvent, void *userData);
 */
 import "C"
 
@@ -50,19 +50,21 @@ func send(instance *WakuInstance, signalType string, event interface{}) {
 		// ...and fallback to C implementation otherwise.
 		dataStr := string(data)
 		str := C.CString(dataStr)
-		C.ServiceSignalEvent(instance.cb, str)
+		C.ServiceSignalEvent(instance.cb, str, instance.cbUserData)
 		C.free(unsafe.Pointer(str))
 	}
 }
 
 // SetEventCallback is to set a callback in order to receive application
-// signals which are used to react to asynchronous events in waku.
-func SetEventCallback(instance *WakuInstance, cb unsafe.Pointer) {
+// signals which are used to react to asynchronous events in waku. cbUserData is
+// passed back to the callback as its user_data argument.
+func SetEventCallback(instance *WakuInstance, cb unsafe.Pointer, cbUserData unsafe.Pointer) {
 	if err := validateInstance(instance, None); err != nil {
 		panic(err.Error())
 	}
 
 	instance.cb = cb
+	instance.cbUserData = cbUserData
 }
 
 // SetMobileSignalHandler sets the callback to be executed when a signal

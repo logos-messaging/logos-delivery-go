@@ -39,6 +39,7 @@ type WakuInstance struct {
 
 	node                *node.WakuNode
 	cb                  unsafe.Pointer
+	cbUserData          unsafe.Pointer
 	connCh              chan node.PeerConnection
 	mobileSignalHandler MobileSignalHandler
 
