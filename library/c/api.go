@@ -297,7 +297,7 @@ func waku_set_event_callback(ctx unsafe.Pointer, cb C.WakuCallBack) {
 		panic(err.Error()) // TODO: refactor to return an error instead of panic
 	}
 
-	library.SetEventCallback(instance, unsafe.Pointer(cb))
+	library.SetEventCallback(instance, unsafe.Pointer(cb), nil)
 }
 
 // Same as waku_set_event_callback, but the callback receives the given userData
@@ -307,10 +307,10 @@ func waku_set_event_callback(ctx unsafe.Pointer, cb C.WakuCallBack) {
 func waku_set_event_callback_with_user_data(ctx unsafe.Pointer, cb C.WakuCallBack, userData unsafe.Pointer) {
 	instance, err := getInstance(ctx)
 	if err != nil {
-		panic(err.Error()) // TODO: refactor to return an error instead of panic
+		panic(err.Error())
 	}
 
-	library.SetEventCallbackWithUserData(instance, unsafe.Pointer(cb), userData)
+	library.SetEventCallback(instance, unsafe.Pointer(cb), userData)
 }
 
 // Retrieve the list of peers known by the waku node

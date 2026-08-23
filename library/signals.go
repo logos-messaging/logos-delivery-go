@@ -56,14 +56,9 @@ func send(instance *WakuInstance, signalType string, event interface{}) {
 }
 
 // SetEventCallback is to set a callback in order to receive application
-// signals which are used to react to asynchronous events in waku.
-func SetEventCallback(instance *WakuInstance, cb unsafe.Pointer) {
-	SetEventCallbackWithUserData(instance, cb, nil)
-}
-
-// SetEventCallbackWithUserData is like SetEventCallback, but passes cbUserData
-// back to the callback as its user_data argument.
-func SetEventCallbackWithUserData(instance *WakuInstance, cb unsafe.Pointer, cbUserData unsafe.Pointer) {
+// signals which are used to react to asynchronous events in waku. cbUserData is
+// passed back to the callback as its user_data argument.
+func SetEventCallback(instance *WakuInstance, cb unsafe.Pointer, cbUserData unsafe.Pointer) {
 	if err := validateInstance(instance, None); err != nil {
 		panic(err.Error())
 	}
