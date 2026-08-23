@@ -26,6 +26,15 @@ else
  GOBIN_SHARED_LIB_CGO_LDFLAGS := CGO_LDFLAGS="-Wl,-soname,libgowaku.so.0"
 endif
 
+# Cross-compiling for Android always produces an ELF .so, whatever the build
+# host is, so the host detection above would pick the wrong extension on macOS
+# and Windows. Android also cannot load a versioned soname: the APK only ships
+# lib*.so and its linker has no version support, so use a plain libgowaku.so.
+ifeq ($(GOOS),android)
+GOBIN_SHARED_LIB_EXT := so
+GOBIN_SHARED_LIB_CGO_LDFLAGS := CGO_LDFLAGS="-Wl,-soname,libgowaku.so"
+endif
+
 GIT_COMMIT = $(shell git rev-parse --short HEAD)
 VERSION = $(shell cat ./VERSION)
 UID := $(shell id -u)
@@ -37,6 +46,22 @@ BUILD_FLAGS ?= $(shell echo "-ldflags='\
 	-X github.com/waku-org/go-waku/waku/v2/node.Version=$(VERSION)'")
 
 ANDROID_TARGET ?= 23
+
+# Extra Go linker flags for the c-archive / c-shared library builds:
+#   -checklinkname=0  needed on Android: the indirect dependency
+#                     github.com/wlynxg/anet uses //go:linkname in
+#                     interface_android.go, which Go 1.23+ rejects by default.
+#   -s                omit the symbol table
+#   -w                omit the DWARF debug information
+# -s -w are applied only for BUILD_TYPE=release, where they noticeably reduce the
+# size of the resulting library; other build types keep the symbols for debugging.
+GO_LDFLAGS_EXTRA :=
+ifeq ($(GOOS),android)
+GO_LDFLAGS_EXTRA += -checklinkname=0
+endif
+ifeq ($(BUILD_TYPE),release)
+GO_LDFLAGS_EXTRA += -s -w
+endif
 
 # control rln code compilation
 ifeq ($(NO_RLN), true)
@@ -125,6 +150,7 @@ static-library:
 	@echo "Building static library..."
 	"${GOCMD}" build \
 		-buildmode=c-archive \
+		-ldflags="$(GO_LDFLAGS_EXTRA)" \
 		-tags="${BUILD_TAGS} gowaku_no_rln" \
 		-o ./build/lib/libgowaku.a \
 		./library/c/
@@ -141,6 +167,7 @@ dynamic-library:
 	rm -f ./build/lib/libgowaku.$(GOBIN_SHARED_LIB_EXT)*
 	$(GOBIN_SHARED_LIB_CFLAGS) $(GOBIN_SHARED_LIB_CGO_LDFLAGS) "${GOCMD}" build \
 		-buildmode=c-shared \
+		-ldflags="$(GO_LDFLAGS_EXTRA)" \
 		-tags="${BUILD_TAGS} gowaku_no_rln" \
 		-o ./build/lib/libgowaku.$(GOBIN_SHARED_LIB_EXT) \
 		./library/c/
@@ -150,9 +177,11 @@ else
 	sed -i "s/#include <cgo_utils.h>//gi" ./build/lib/libgowaku.h
 endif
 ifeq ($(detected_OS),Linux)
+ifneq ($(GOOS),android)
 	cd ./build/lib && \
 	mv ./libgowaku.$(GOBIN_SHARED_LIB_EXT) ./libgowaku.$(GOBIN_SHARED_LIB_EXT).0 && \
 	ln -s ./libgowaku.$(GOBIN_SHARED_LIB_EXT).0 ./libgowaku.$(GOBIN_SHARED_LIB_EXT)
+endif
 endif
 	@echo "Shared library built:"
 	@ls -la ./build/lib/libgowaku.*
