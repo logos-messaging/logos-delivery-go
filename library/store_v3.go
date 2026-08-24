@@ -16,13 +16,15 @@ import (
 // string rather than the legacy structured Index. When marshalled to JSON the
 // cursor is base64-encoded; pass it back verbatim on the next call to page.
 type storeV3PagingOptions struct {
-	PageSize uint64 `json:"pageSize,omitempty"`
+	PageSize uint64 `json:"pageSize"`
 	Cursor   []byte `json:"cursor,omitempty"`
-	Forward  bool   `json:"forward,omitempty"`
+	// Forward is serialised even when false: the reply reports the pagination
+	// actually used, and the caller is expected to pass it back verbatim.
+	Forward bool `json:"forward"`
 }
 
 type storeV3MessagesArgs struct {
-	Topic         string                `json:"pubsubTopic,omitempty"`
+	PubsubTopic   string                `json:"pubsubTopic"`
 	ContentTopics []string              `json:"contentTopics,omitempty"`
 	StartTime     *int64                `json:"startTime,omitempty"`
 	EndTime       *int64                `json:"endTime,omitempty"`
@@ -58,7 +60,7 @@ func StoreQueryV3(instance *WakuInstance, queryJSON string, peerID string, ms in
 	}
 
 	criteria := store.FilterCriteria{
-		ContentFilter: protocol.NewContentFilter(args.Topic, args.ContentTopics...),
+		ContentFilter: protocol.NewContentFilter(args.PubsubTopic, args.ContentTopics...),
 		TimeStart:     args.StartTime,
 		TimeEnd:       args.EndTime,
 	}
@@ -108,12 +110,14 @@ func StoreQueryV3(instance *WakuInstance, queryJSON string, peerID string, ms in
 		}
 	}
 
+	// Report the pagination the query actually used, not what the caller asked
+	// for: when pagingOptions is omitted the store applies its own defaults, and
+	// echoing zero values back would flip the direction on the next call.
+	query := result.Query()
 	reply.PagingInfo = storeV3PagingOptions{
-		Cursor: result.Cursor(),
-	}
-	if args.PagingOptions != nil {
-		reply.PagingInfo.PageSize = args.PagingOptions.PageSize
-		reply.PagingInfo.Forward = args.PagingOptions.Forward
+		PageSize: query.GetPaginationLimit(),
+		Cursor:   result.Cursor(),
+		Forward:  query.GetPaginationForward(),
 	}
 
 	return marshalJSON(reply)

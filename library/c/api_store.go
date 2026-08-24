@@ -45,14 +45,13 @@ func waku_store_query(ctx unsafe.Pointer, queryJSON *C.char, peerID *C.char, ms 
 	}, ctx, cb, userData)
 }
 
-// Query historic messages using the StoreV3 protocol (/vac/waku/store-query/3.0.0).
-// Use this instead of waku_store_query when the storenode only exposes the v3
-// query protocol (e.g. current nwaku store nodes) rather than the legacy
+// Query historic messages using the StoreV3 protocol (/vac/waku/store-query/3.0.0),
+// as opposed to waku_store_query which speaks the legacy
 // /vac/waku/store/2.0.0-beta4 protocol.
 // queryJSON must contain a valid json string with the following format:
 //
 //	{
-//		"pubsubTopic": "...", // optional string
+//		"pubsubTopic": "...", // required string
 //		"startTime": 1234, // optional, unix epoch time in nanoseconds
 //		"endTime": 1234, // optional, unix epoch time in nanoseconds
 //		"contentTopics": [ // optional
@@ -66,9 +65,10 @@ func waku_store_query(ctx unsafe.Pointer, queryJSON *C.char, peerID *C.char, ms 
 //		}
 //	}
 //
-// The response `pagingInfo.cursor` is an opaque base64 byte string (NOT the
-// structured legacy cursor). If a non empty cursor is returned, this function
-// should be executed again, setting the `cursor` attribute to page further.
+// The response `pagingInfo` reports the pagination that was actually used, so it
+// can be passed back verbatim to fetch the next page. Its `cursor` is an opaque
+// base64 byte string (NOT the structured legacy cursor). If a non empty cursor is
+// returned, this function should be executed again with that `pagingInfo`.
 // peerID should contain the ID of a peer supporting the StoreV3 protocol. Use NULL to automatically select a node
 // If ms is greater than 0, the query must complete before the timeout
 // (in milliseconds) is reached, or an error will be returned
