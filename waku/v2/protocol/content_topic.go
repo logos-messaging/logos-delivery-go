@@ -88,6 +88,10 @@ func (ct ContentTopic) Equal(ct2 ContentTopic) bool {
 // For static and named-sharding, contentTopic can be of any format and hence it is not recommended to use this function.
 // This can be updated if required to handle such a case.
 func StringToContentTopic(s string) (ContentTopic, error) {
+	if !strings.HasPrefix(s, "/") {
+		return ContentTopic{}, ErrInvalidFormat
+	}
+
 	p := strings.Split(s, "/")
 	switch len(p) {
 	case 5:
