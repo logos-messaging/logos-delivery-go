@@ -3,9 +3,11 @@ package peermanager
 import (
 	"context"
 	"crypto/rand"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/stretchr/testify/require"
@@ -45,4 +47,34 @@ func TestRTT(t *testing.T) {
 			require.NotEqual(t, h3.ID(), p)
 		}
 	}
+}
+
+// TestPingSortOrdersByRTT verifies that peers sharing the same connectedness are
+// ordered by round trip time, so that FastestPeer returns the fastest one.
+func TestPingSortOrdersByRTT(t *testing.T) {
+	results := []pingResult{
+		{peerID: "slow", rtt: 500 * time.Millisecond, connectedness: network.Connected},
+		{peerID: "fast", rtt: 10 * time.Millisecond, connectedness: network.Connected},
+		{peerID: "medium", rtt: 100 * time.Millisecond, connectedness: network.Connected},
+	}
+
+	sort.Sort(pingSort(results))
+
+	require.Equal(t, peer.ID("fast"), results[0].peerID)
+	require.Equal(t, peer.ID("medium"), results[1].peerID)
+	require.Equal(t, peer.ID("slow"), results[2].peerID)
+}
+
+// TestPingSortPrefersConnectedPeers verifies that connectedness stays the primary
+// criteria, even when a less connected peer has a lower round trip time.
+func TestPingSortPrefersConnectedPeers(t *testing.T) {
+	results := []pingResult{
+		{peerID: "not-connected", rtt: 10 * time.Millisecond, connectedness: network.NotConnected},
+		{peerID: "connected", rtt: 500 * time.Millisecond, connectedness: network.Connected},
+	}
+
+	sort.Sort(pingSort(results))
+
+	require.Equal(t, peer.ID("connected"), results[0].peerID)
+	require.Equal(t, peer.ID("not-connected"), results[1].peerID)
 }
