@@ -55,6 +55,17 @@ func TestContentTopicAndSharding(t *testing.T) {
 	require.Equal(t, ct5.Generation, 0)
 }
 
+func TestStringToContentTopicRequiresLeadingSlash(t *testing.T) {
+	// A content topic is /{application}/{version}/{topic-name}/{encoding}, so any
+	// text before the first slash makes the string an invalid content topic.
+	_, err := StringToContentTopic("waku/2/test/proto/extra")
+	require.ErrorIs(t, err, ErrInvalidFormat)
+
+	// Same with the optional generation part.
+	_, err = StringToContentTopic("waku/0/toychat/2/huilong/proto")
+	require.ErrorIs(t, err, ErrInvalidFormat)
+}
+
 func randomContentTopic() (ContentTopic, error) {
 	var app = ""
 	const WordLength = 5
