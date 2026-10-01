@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -57,6 +58,7 @@ type WakuFilterLightNode struct {
 	pm               *peermanager.PeerManager
 	limiter          *utils.RateLimiter
 	peerPingInterval time.Duration
+	backgroundMode   atomic.Bool // true when app UI is not visible; suppresses health-check pings
 }
 
 type WakuFilterPushError struct {
