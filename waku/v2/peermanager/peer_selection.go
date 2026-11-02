@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -148,6 +149,67 @@ func (pm *PeerManager) preferConnectedPeers(peers peer.IDSlice) peer.IDSlice {
 	return peers
 }
 
+// selectHealthyPeers selects up to count random peers, first among the peers we
+// are connected to, then among the peers that have not failed a dial. Peers
+// that failed a dial are selected only when there is no other peer.
+func (pm *PeerManager) selectHealthyPeers(peers peer.IDSlice, excludePeers PeerSet, count int) (PeerSet, error) {
+	var connected, notFailed, failed peer.IDSlice
+	for _, p := range peers {
+		switch {
+		case PeerInSet(excludePeers, p):
+		case pm.host.Network().Connectedness(p) == network.Connected:
+			connected = append(connected, p)
+		case pm.host.Peerstore().(wps.WakuPeerstore).ConnFailures(p) == 0:
+			notFailed = append(notFailed, p)
+		default:
+			failed = append(failed, p)
+		}
+	}
+
+	selected := make(PeerSet)
+	for _, tier := range []peer.IDSlice{connected, notFailed} {
+		if len(selected) == count {
+			break
+		}
+		tierPeers, _ := selectRandomPeers(tier, selected, count-len(selected))
+		for p := range tierPeers {
+			selected[p] = struct{}{}
+		}
+	}
+	if len(selected) == 0 {
+		return selectRandomPeers(failed, nil, count)
+	}
+	return selected, nil
+}
+
+// connectedPeersOutsideSlot returns the connected peers that support
+// criteria.Proto, are not excluded and are not in slot. With
+// criteria.SpecificPeers, it returns only those.
+func (pm *PeerManager) connectedPeersOutsideSlot(slot *peerMap, criteria PeerSelectionCriteria) peer.IDSlice {
+	connected := pm.host.Network().Peers()
+	if len(criteria.SpecificPeers) > 0 {
+		specific := PeerSliceToMap(criteria.SpecificPeers)
+		connected = slices.DeleteFunc(connected, func(p peer.ID) bool { return !PeerInSet(specific, p) })
+	}
+	if len(connected) == 0 {
+		return nil
+	}
+	peers, err := pm.FilterPeersByProto(connected, criteria.ExcludePeers, criteria.Proto)
+	if err != nil {
+		pm.logger.Debug("could not filter connected peers by protocol", zap.Error(err))
+		return nil
+	}
+	slot.mu.RLock()
+	defer slot.mu.RUnlock()
+	outside := make(peer.IDSlice, 0, len(peers))
+	for _, p := range peers {
+		if _, ok := slot.m[p]; !ok {
+			outside = append(outside, p)
+		}
+	}
+	return outside
+}
+
 // selects count random peers from list of peers
 func selectRandomPeers(peers peer.IDSlice, excludePeers PeerSet, count int) (PeerSet, error) {
 	filteredPeerMap := PeerSliceToMap(peers)
@@ -198,10 +260,12 @@ func (pm *PeerManager) selectServicePeer(criteria PeerSelectionCriteria) (PeerSe
 			keys = append(keys, peerID)
 		}
 		slot.mu.RUnlock()
+		// Peers we are connected to can serve the protocol without being in the
+		// slot, e.g. a static or bootstrap node, while the slot fills up with
+		// stale peer-exchange peers.
+		keys = append(keys, pm.connectedPeersOutsideSlot(slot, criteria)...)
 		selectedPeers := pm.host.Peerstore().(wps.WakuPeerstore).PeersByPubSubTopics(criteria.PubsubTopics, keys...)
-		// Prefer already-connected service peers over stale/unreachable ones.
-		selectedPeers = pm.preferConnectedPeers(selectedPeers)
-		tmpPeers, err := selectRandomPeers(selectedPeers, criteria.ExcludePeers, criteria.MaxPeers)
+		tmpPeers, err := pm.selectHealthyPeers(selectedPeers, criteria.ExcludePeers, criteria.MaxPeers)
 		for tmpPeer := range tmpPeers {
 			peers[tmpPeer] = struct{}{}
 		}

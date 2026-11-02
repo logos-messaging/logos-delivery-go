@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	libp2pProtocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
@@ -330,4 +331,83 @@ func TestOnDemandPeerDiscovery(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, host1.ID(), peerIDs[0])
 
+}
+
+const (
+	selectionTestProtocol    = libp2pProtocol.ID("test/protocol")
+	selectionTestPubsubTopic = "/waku/2/rs/2/1"
+)
+
+// addSlotPeer adds a peer learned via peer exchange, which lands in the
+// service slot. A failed peer is gone and failed a dial already.
+func addSlotPeer(ctx context.Context, t *testing.T, pm *PeerManager, failed bool) peer.ID {
+	h, err := tests.MakeHost(ctx, 0, rand.Reader)
+	require.NoError(t, err)
+	_, err = pm.AddPeer([]multiaddr.Multiaddr{tests.GetAddr(h)}, wps.PeerExchange, []string{selectionTestPubsubTopic}, selectionTestProtocol)
+	require.NoError(t, err)
+	if failed {
+		require.NoError(t, h.Close())
+		pm.host.Peerstore().(wps.WakuPeerstore).AddConnFailure(h.ID())
+	} else {
+		t.Cleanup(func() { _ = h.Close() })
+	}
+	return h.ID()
+}
+
+// connectServicePeer connects to a peer that serves the protocol without
+// adding it to the service slot, like a bootstrap node.
+func connectServicePeer(ctx context.Context, t *testing.T, pm *PeerManager) peer.ID {
+	h, err := tests.MakeHost(ctx, 0, rand.Reader)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h.Close() })
+	h.SetStreamHandler(selectionTestProtocol, func(s network.Stream) { _ = s.Close() })
+	require.NoError(t, pm.host.Connect(ctx, peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}))
+	require.NoError(t, pm.host.Peerstore().(wps.WakuPeerstore).SetPubSubTopics(h.ID(), []string{selectionTestPubsubTopic}))
+	return h.ID()
+}
+
+func selectServicePeers(t *testing.T, pm *PeerManager) peer.IDSlice {
+	peerIDs, err := pm.SelectPeers(PeerSelectionCriteria{
+		SelectionType: Automatic,
+		Proto:         selectionTestProtocol,
+		PubsubTopics:  []string{selectionTestPubsubTopic},
+		MaxPeers:      3,
+	})
+	require.NoError(t, err)
+	return peerIDs
+}
+
+func TestSelectRandomPrefersConnectedPeerOutsideServiceSlot(t *testing.T) {
+	ctx, pm, deferFn := initTest(t)
+	defer deferFn()
+
+	for i := 0; i < 3; i++ {
+		addSlotPeer(ctx, t, pm, true)
+	}
+	live := connectServicePeer(ctx, t, pm)
+
+	require.Equal(t, peer.IDSlice{live}, selectServicePeers(t, pm))
+}
+
+func TestSelectRandomFillsWithPeersThatHaveNotFailed(t *testing.T) {
+	ctx, pm, deferFn := initTest(t)
+	defer deferFn()
+
+	for i := 0; i < 3; i++ {
+		addSlotPeer(ctx, t, pm, true)
+	}
+	untried := addSlotPeer(ctx, t, pm, false)
+	live := connectServicePeer(ctx, t, pm)
+
+	require.ElementsMatch(t, peer.IDSlice{live, untried}, selectServicePeers(t, pm))
+}
+
+func TestSelectRandomFallsBackToFailedPeers(t *testing.T) {
+	ctx, pm, deferFn := initTest(t)
+	defer deferFn()
+
+	failed1 := addSlotPeer(ctx, t, pm, true)
+	failed2 := addSlotPeer(ctx, t, pm, true)
+
+	require.ElementsMatch(t, peer.IDSlice{failed1, failed2}, selectServicePeers(t, pm))
 }
