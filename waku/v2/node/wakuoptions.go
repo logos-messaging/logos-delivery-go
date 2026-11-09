@@ -86,6 +86,7 @@ type WakuNodeParameters struct {
 	enableFilterLightNode bool
 	enableFilterFullNode  bool
 	filterOpts            []filter.Option
+	filterLightNodeOpts   []filter.LightNodeOption
 	pubsubOpts            []pubsub.Option
 	lightpushOpts         []lightpush.Option
 
@@ -461,10 +462,13 @@ func WithPeerExchange(options ...peer_exchange.Option) WakuNodeOption {
 	}
 }
 
-// WithWakuFilter enables the Waku Filter V2 protocol for lightnode functionality
-func WithWakuFilterLightNode() WakuNodeOption {
+// WithWakuFilterLightNode enables the Waku Filter V2 protocol light node functionality.
+// Options configure the light node, for example filter.WithLightNodeRateLimiter.
+// Without options, the Filter light-node defaults are used.
+func WithWakuFilterLightNode(opts ...filter.LightNodeOption) WakuNodeOption {
 	return func(params *WakuNodeParameters) error {
 		params.enableFilterLightNode = true
+		params.filterLightNodeOpts = opts
 		return nil
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/waku-org/go-waku/waku/v2/peermanager"
+	"github.com/waku-org/go-waku/waku/v2/protocol/filter"
 	"github.com/waku-org/go-waku/waku/v2/protocol/legacy_store"
 	"github.com/waku-org/go-waku/waku/v2/protocol/pb"
 	r "github.com/waku-org/go-zerokit-rln/rln"
@@ -72,6 +73,63 @@ func TestWakuOptions(t *testing.T) {
 	require.NotNil(t, params.multiAddr)
 	require.NotNil(t, params.privKey)
 	require.NotNil(t, params.topicHealthNotifCh)
+}
+
+func TestWakuFilterLightNodeOptions(t *testing.T) {
+	t.Run("no options", func(t *testing.T) {
+		wakuNode, err := New(WithPrometheusRegisterer(prometheus.NewRegistry()), WithWakuFilterLightNode())
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, wakuNode.peerstore.Close()) })
+		require.True(t, wakuNode.opts.enableFilterLightNode)
+		require.NotNil(t, wakuNode.FilterLightnode())
+	})
+
+	for _, tt := range []struct {
+		name    string
+		options []filter.LightNodeOption
+	}{
+		{
+			name: "defaults",
+		},
+		{
+			name:    "custom rate limiter",
+			options: []filter.LightNodeOption{filter.WithLightNodeRateLimiter(25, 80)},
+		},
+		{
+			name: "last option wins",
+			options: []filter.LightNodeOption{
+				filter.WithLightNodeRateLimiter(1, 2),
+				filter.WithLightNodeRateLimiter(25, 80),
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := new(filter.LightNodeParameters)
+			for _, opt := range filter.DefaultLightNodeOptions() {
+				opt(expected)
+			}
+			if len(tt.options) > 0 {
+				filter.WithLightNodeRateLimiter(25, 80)(expected)
+			}
+
+			var actual filter.LightNodeParameters
+			calls := 0
+			options := append(tt.options, func(params *filter.LightNodeParameters) {
+				actual = *params
+				calls++
+			})
+			wakuNode, err := New(
+				WithPrometheusRegisterer(prometheus.NewRegistry()),
+				WithWakuFilterLightNode(options...),
+			)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, wakuNode.peerstore.Close()) })
+			require.True(t, wakuNode.opts.enableFilterLightNode)
+			require.NotNil(t, wakuNode.FilterLightnode())
+			require.Equal(t, 1, calls, "options must reach the Filter light-node constructor")
+			require.Equal(t, *expected, actual)
+		})
+	}
 }
 
 func TestWakuRLNOptions(t *testing.T) {
