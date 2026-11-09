@@ -42,6 +42,13 @@ func (wf *WakuFilterLightNode) PingPeer(peer peer.ID) {
 	}
 }
 
+// SetBackgroundMode suppresses (background=true) or re-enables (background=false)
+// the periodic health-check pings sent to filter peers. Call with background=true
+// when the app UI is not visible to avoid waking the LTE radio during Doze windows.
+func (wf *WakuFilterLightNode) SetBackgroundMode(background bool) {
+	wf.backgroundMode.Store(background)
+}
+
 func (wf *WakuFilterLightNode) FilterHealthCheckLoop() {
 	defer utils.LogOnPanic()
 	defer wf.WaitGroup().Done()
@@ -50,6 +57,11 @@ func (wf *WakuFilterLightNode) FilterHealthCheckLoop() {
 	for {
 		select {
 		case <-ticker.C:
+			if wf.backgroundMode.Load() {
+				// In background: skip health-check ping to avoid waking the LTE radio.
+				// SetBackgroundMode(false) will resume pings on foreground return.
+				continue
+			}
 			if wf.onlineChecker.IsOnline() {
 				wf.PingPeers()
 			}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,6 +58,9 @@ type Sub struct {
 	resubscribeInProgress bool
 	id                    string
 	errcnt                int
+	// backgroundMode suppresses subscription renewal when the app UI is not visible.
+	// Toggled via SetBackgroundMode; read from subscriptionLoop goroutine.
+	backgroundMode atomic.Bool
 	// rateLimitedUntil is set when subscribe() observes a *SubscribeError whose
 	// FailedPeers contain at least one HTTP 429. While time.Now().Before(rateLimitedUntil),
 	// subscriptionLoop suppresses retry triggers (ticker push and checkAndResubscribe).
@@ -139,6 +143,11 @@ func (apiSub *Sub) subscriptionLoop(loopInterval time.Duration) {
 		select {
 		case <-ticker.C:
 			apiSub.errcnt = 0 //reset errorCount
+			if apiSub.backgroundMode.Load() {
+				// In background: skip health check to avoid waking the LTE radio.
+				// SetBackgroundMode(false) triggers resubscription on foreground.
+				continue
+			}
 			if shouldHonourRateLimitBackoff(apiSub.rateLimitedUntil, time.Now()) {
 				apiSub.log.Debug("ticker push suppressed by rate-limit backoff",
 					zap.Time("rate-limited-until", apiSub.rateLimitedUntil),
@@ -154,6 +163,14 @@ func (apiSub *Sub) subscriptionLoop(loopInterval time.Duration) {
 			apiSub.cleanup()
 			return
 		case subId := <-apiSub.closing:
+			if apiSub.backgroundMode.Load() {
+				// In background: subscription expired but don't resubscribe now.
+				// SetBackgroundMode(false) will trigger resubscription on foreground.
+				apiSub.log.Debug("resubscribe suppressed: app in background",
+					zap.String("sub-id", subId),
+				)
+				continue
+			}
 			if shouldHonourRateLimitBackoff(apiSub.rateLimitedUntil, time.Now()) {
 				apiSub.log.Debug("checkAndResubscribe suppressed by rate-limit backoff",
 					zap.Time("rate-limited-until", apiSub.rateLimitedUntil),
@@ -170,6 +187,23 @@ func (apiSub *Sub) subscriptionLoop(loopInterval time.Duration) {
 					zap.Int("filter-sub-max-err-cnt", filterSubMaxErrCnt),
 				)
 			}
+		}
+	}
+}
+
+// SetBackgroundMode controls whether this subscription suppresses renewal.
+// Call with background=true when the app UI is not visible (screen locked).
+// Call with background=false when returning to foreground; this triggers an
+// immediate resubscription attempt for any subscriptions that expired while
+// backgrounded.
+func (apiSub *Sub) SetBackgroundMode(background bool) {
+	apiSub.backgroundMode.Store(background)
+	if !background {
+		// Returning to foreground: prod the loop to resubscribe.
+		select {
+		case apiSub.closing <- "":
+		default:
+			// A resubscription is already queued.
 		}
 	}
 }
